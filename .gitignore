@@ -3,10 +3,10 @@
 *.npy
 *.mp3
 *.pyc
+*.log
 /dataset/annotations
 /dataset/annotations_dense
 /dataset/audio
 /dataset/meta
 /dataset/sources
-
-
+/checkpoints

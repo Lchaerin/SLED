@@ -91,7 +91,7 @@ class SLEDDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         scene_id = self.scene_ids[idx]
-        stem = f"scene_{scene_id}"
+        stem = scene_id   # already "scene_XXXXXX" from split.json
 
         # ---- Load audio (stereo, float32) -----------------------------------
         wav_path = self.audio_dir / f"{stem}.wav"
