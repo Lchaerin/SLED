@@ -1,0 +1,6 @@
+numpy>=1.24
+scipy>=1.10
+soundfile>=0.12
+h5py>=3.8
+tqdm>=4.65
+torch>=2.0          # only for torch_dataset.py

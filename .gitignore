@@ -1,0 +1,12 @@
+*.sofa
+*.wav
+*.npy
+*.mp3
+*.pyc
+/dataset/annotations
+/dataset/annotations_dense
+/dataset/audio
+/dataset/meta
+/dataset/sources
+
+
