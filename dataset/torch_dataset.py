@@ -93,12 +93,6 @@ class SLEDDataset(Dataset):
         scene_id = self.scene_ids[idx]
         stem = scene_id   # already "scene_XXXXXX" from split.json
 
-        # ---- Load audio (stereo, float32) -----------------------------------
-        wav_path = self.audio_dir / f"{stem}.wav"
-        audio, sr = sf.read(str(wav_path), dtype="float32", always_2d=True)
-        # audio: (N, 2) → (2, N)
-        audio = torch.from_numpy(audio.T.copy())  # (2, N)
-
         # ---- Memory-map dense annotations -----------------------------------
         cls  = np.load(str(self.dense_dir / f"{stem}_cls.npy"),  mmap_mode="r")  # (T,5)
         doa  = np.load(str(self.dense_dir / f"{stem}_doa.npy"),  mmap_mode="r")  # (T,5,3)
@@ -121,10 +115,17 @@ class SLEDDataset(Dataset):
         loud_w = loud[start_frame:end_frame].copy()
         mask_w = mask[start_frame:end_frame].copy()
 
-        # Crop audio
+        # ---- Load only the required audio window ----------------------------
+        # sf.read with start/frames avoids loading the full 45-second file.
         start_sample = start_frame * HOP_SAMPLES
-        end_sample   = end_frame   * HOP_SAMPLES
-        audio = audio[:, start_sample:end_sample]
+        num_samples  = (end_frame - start_frame) * HOP_SAMPLES
+        wav_path = self.audio_dir / f"{stem}.wav"
+        audio, _ = sf.read(
+            str(wav_path), dtype="float32", always_2d=True,
+            start=start_sample, frames=num_samples,
+        )
+        # audio: (N, 2) → (2, N)
+        audio = torch.from_numpy(audio.T.copy())  # (2, N)
 
         # ---- Stereo Channel Swap augmentation --------------------------------
         if self.augment_scs and random.random() < 0.5:

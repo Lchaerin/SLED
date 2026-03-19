@@ -143,6 +143,7 @@ def train_epoch(
     meters = {k: AverageMeter() for k in ["total", "cls", "doa", "loud", "conf", "sce"]}
     max_src = curriculum_max_sources(epoch)
     t0 = time.time()
+    t_batch = time.time()
 
     for batch_idx, batch in enumerate(loader):
         # ── LR schedule ─────────────────────────────────────────────────
@@ -177,13 +178,20 @@ def train_epoch(
         B = audio.size(0)
         for k in meters:
             if k in losses:
-                meters[k].update(float(losses[k]), B)
+                meters[k].update(losses[k].detach().item(), B)
 
         if writer is not None and step % 50 == 0:
             writer.add_scalar("train/loss",    meters["total"].val, step)
             writer.add_scalar("train/loss_cls", meters["cls"].val,  step)
             writer.add_scalar("train/loss_doa", meters["doa"].val,  step)
             writer.add_scalar("train/lr",       lr,                 step)
+
+        # if batch_idx % 50 == 0:
+        elapsed_batch = (time.time() - t_batch) / max(batch_idx, 1)
+        logger.info(
+            "Epoch %d  [%d/%d]  loss=%.4f  lr=%.2e  %.2fs/batch",
+            epoch, batch_idx, len(loader), meters["total"].avg, lr, elapsed_batch,
+        )
 
         step += 1
 
@@ -234,7 +242,7 @@ def val_epoch(
         B = audio.size(0)
         for k in meters:
             if k in losses:
-                meters[k].update(float(losses[k]), B)
+                meters[k].update(losses[k].detach().item(), B)
 
     avg = {k: m.avg for k, m in meters.items()}
     logger.info(
