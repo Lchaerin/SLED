@@ -477,7 +477,7 @@ def main():
     p.add_argument("--epochs",        type=int, default=300)
     p.add_argument("--batch",         type=int, default=32,  help="Per-GPU batch size")
     p.add_argument("--workers",       type=int, default=16)
-    p.add_argument("--lr",            type=float, default=1e-3)
+    p.add_argument("--lr",            type=float, default=2e-3)
     p.add_argument("--window-frames", type=int, default=256,
                    help="Number of 20ms frames per training window (default 256 = 5.12 s)")
     p.add_argument("--val-every",     type=int, default=5,  help="Validate every N epochs")

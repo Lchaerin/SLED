@@ -238,7 +238,7 @@ class DetectionHeads(nn.Module):
 
         cls_logits = self.class_head(x)                     # (B, S, 301)
         doa_raw    = self.doa_head(x)                       # (B, S, 3)
-        doa_vec    = F.normalize(doa_raw, p=2, dim=-1)      # unit vector
+        doa_vec    = F.normalize(doa_raw, p=2, dim=-1, eps=1e-6)  # unit vector
         loudness   = self.loud_head(x).squeeze(-1)          # (B, S)
         conf_logit = self.conf_head(x).squeeze(-1)            # (B, S) raw logit
 
