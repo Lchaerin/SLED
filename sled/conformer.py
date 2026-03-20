@@ -36,33 +36,42 @@ class FeedForward(nn.Module):
 
 
 class ConvModule(nn.Module):
-    """Conformer convolution sub-module."""
+    """Conformer convolution sub-module.
 
-    def __init__(self, d_model: int, kernel_size: int = 31, dropout: float = 0.1):
+    When causal=True (default), uses left-only padding so each frame only
+    sees its past — no future leakage.
+    """
+
+    def __init__(self, d_model: int, kernel_size: int = 31, dropout: float = 0.1,
+                 causal: bool = True):
         super().__init__()
-        assert kernel_size % 2 == 1, "kernel_size must be odd"
+        self.causal = causal
         self.norm   = nn.LayerNorm(d_model)
         self.pw1    = nn.Conv1d(d_model, 2 * d_model, kernel_size=1)   # pointwise expand
         # GLU halves channels back to d_model
+        # Causal: padding=0, manual left-pad; non-causal: symmetric padding
+        padding = 0 if causal else kernel_size // 2
         self.dw     = nn.Conv1d(
             d_model, d_model,
             kernel_size=kernel_size,
-            padding=kernel_size // 2,
+            padding=padding,
             groups=d_model,
             bias=False,
         )
+        self._causal_pad = kernel_size - 1   # amount of left padding needed
         self.bn     = nn.BatchNorm1d(d_model)
         self.pw2    = nn.Conv1d(d_model, d_model, kernel_size=1)       # pointwise project
         self.drop   = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, T, d)
-        residual = x
-        x = self.norm(x).transpose(1, 2)     # (B, d, T)
-        x = F.glu(self.pw1(x), dim=1)        # (B, d, T)  GLU halves channels
-        x = F.silu(self.bn(self.dw(x)))       # (B, d, T)
+        x = self.norm(x).transpose(1, 2)              # (B, d, T)
+        x = F.glu(self.pw1(x), dim=1)                 # (B, d, T)  GLU halves channels
+        if self.causal:
+            x = F.pad(x, (self._causal_pad, 0))       # left-only pad
+        x = F.silu(self.bn(self.dw(x)))                # (B, d, T)
         x = self.drop(self.pw2(x))
-        return x.transpose(1, 2)             # (B, T, d)
+        return x.transpose(1, 2)                       # (B, T, d)
 
 
 class ConformerBlock(nn.Module):
@@ -71,6 +80,9 @@ class ConformerBlock(nn.Module):
     Params ≈ 2×FFN + MHSA + ConvModule + 4×LayerNorm
            ≈ 2×(d×ffn + ffn×d) + 4×d² + d×k + 4×(2d) ≈ 4dF + 4d² + dk
     For d=128, F=512, k=31: ≈ 262K + 65K + 4K ≈ 331K per block
+
+    When causal=True (default), MHSA uses a causal triangular mask so each
+    frame only attends to itself and past frames.
     """
 
     def __init__(
@@ -80,14 +92,16 @@ class ConformerBlock(nn.Module):
         ffn_dim: int = 512,
         conv_kernel: int = 31,
         dropout: float = 0.1,
+        causal: bool = True,
     ):
         super().__init__()
+        self.causal = causal
         self.ffn1  = FeedForward(d_model, ffn_dim, dropout)
         self.norm2 = nn.LayerNorm(d_model)
         self.mhsa  = nn.MultiheadAttention(
             d_model, n_heads, dropout=dropout, batch_first=True
         )
-        self.conv  = ConvModule(d_model, conv_kernel, dropout)
+        self.conv  = ConvModule(d_model, conv_kernel, dropout, causal=causal)
         self.ffn2  = FeedForward(d_model, ffn_dim, dropout)
         self.norm_out = nn.LayerNorm(d_model)
 
@@ -100,7 +114,18 @@ class ConformerBlock(nn.Module):
         x = x + 0.5 * self.ffn1(x)
 
         x_norm = self.norm2(x)
-        attn_out, _ = self.mhsa(x_norm, x_norm, x_norm, key_padding_mask=key_padding_mask)
+        attn_mask = None
+        if self.causal:
+            T = x.size(1)
+            # True entries are masked (ignored); upper triangle = future frames
+            attn_mask = torch.triu(
+                torch.ones(T, T, device=x.device, dtype=torch.bool), diagonal=1
+            )
+        attn_out, _ = self.mhsa(
+            x_norm, x_norm, x_norm,
+            key_padding_mask=key_padding_mask,
+            attn_mask=attn_mask,
+        )
         x = x + attn_out
 
         x = x + self.conv(x)

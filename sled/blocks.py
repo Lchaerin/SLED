@@ -79,10 +79,11 @@ class _BiFPNLayer(nn.Module):
         self.w_bu4  = nn.Parameter(torch.ones(3))   # (P4, P4_td, P3_bu)
         self.w_bu5  = nn.Parameter(torch.ones(3))   # (P5, P5_td, P4_bu)
 
-        # Depthwise-separable conv after each fusion (shared)
+        # Depthwise-separable conv after each fusion (causal: left-only padding)
         def _dw_sep(d):
             return nn.Sequential(
-                nn.Conv1d(d, d, kernel_size=3, padding=1, groups=d, bias=False),
+                nn.ConstantPad1d((2, 0), 0),                           # causal left pad
+                nn.Conv1d(d, d, kernel_size=3, padding=0, groups=d, bias=False),
                 nn.Conv1d(d, d, kernel_size=1, bias=False),
                 nn.BatchNorm1d(d),
                 nn.SiLU(),
@@ -121,24 +122,24 @@ class BiFPNNeck(nn.Module):
     """
     2-layer BiFPN over the 3 ConvBlock intermediate outputs.
 
-    Inputs:  P3 (B, 32, F3, T), P4 (B, 64, F4, T), P5 (B, 128, F5, T)
+    Inputs:  P3 (B, c3, F3, T), P4 (B, c4, F4, T), P5 (B, c5, F5, T)
              (F3=32, F4=16, F5=8 after 3 MaxPool(freq))
     Process:
-      1. Project each Pk to (B, 128, T) via freq-flatten + Linear
+      1. Project each Pk to (B, d, T) via freq-flatten + Linear
       2. Apply 2× _BiFPNLayer
-      3. Sum all three outputs → (B, 128, T)
+      3. Sum all three outputs → (B, d, T)
     """
 
-    def __init__(self, d: int = 128, n_layers: int = 2):
+    def __init__(self, d: int = 256, n_layers: int = 2, in_channels: tuple = (64, 128, 256)):
         super().__init__()
         # Projection: frequency-average then pointwise conv (channel projection)
         # Frequency averaging eliminates the F dimension cheaply.
-        # P3: (B,32,32,T) → avg_freq → (B,32,T) → Conv1d(32,128,1)
-        # P4: (B,64,16,T) → avg_freq → (B,64,T) → Conv1d(64,128,1)
-        # P5: (B,128,8,T) → avg_freq → (B,128,T) → Conv1d(128,128,1)
-        self.proj3 = nn.Conv1d(32,  d, kernel_size=1, bias=False)
-        self.proj4 = nn.Conv1d(64,  d, kernel_size=1, bias=False)
-        self.proj5 = nn.Conv1d(128, d, kernel_size=1, bias=False)
+        # P3: (B,c3,32,T) → avg_freq → (B,c3,T) → Conv1d(c3,d,1)
+        # P4: (B,c4,16,T) → avg_freq → (B,c4,T) → Conv1d(c4,d,1)
+        # P5: (B,c5,8,T)  → avg_freq → (B,c5,T) → Conv1d(c5,d,1)
+        self.proj3 = nn.Conv1d(in_channels[0], d, kernel_size=1, bias=False)
+        self.proj4 = nn.Conv1d(in_channels[1], d, kernel_size=1, bias=False)
+        self.proj5 = nn.Conv1d(in_channels[2], d, kernel_size=1, bias=False)
         self.bn3   = nn.BatchNorm1d(d)
         self.bn4   = nn.BatchNorm1d(d)
         self.bn5   = nn.BatchNorm1d(d)
@@ -147,14 +148,14 @@ class BiFPNNeck(nn.Module):
 
     def forward(
         self,
-        p3: torch.Tensor,   # (B, 32, 32, T)
-        p4: torch.Tensor,   # (B, 64, 16, T)
-        p5: torch.Tensor,   # (B, 128, 8, T)
+        p3: torch.Tensor,   # (B, c3, F3, T)
+        p4: torch.Tensor,   # (B, c4, F4, T)
+        p5: torch.Tensor,   # (B, c5, F5, T)
     ) -> torch.Tensor:
 
         def _proj(x, proj, bn):
             x = x.mean(dim=2)          # freq-average: (B, C, T)
-            return F.silu(bn(proj(x))) # channel project: (B, 128, T)
+            return F.silu(bn(proj(x))) # channel project: (B, d, T)
 
         f3 = _proj(p3, self.proj3, self.bn3)
         f4 = _proj(p4, self.proj4, self.bn4)
@@ -163,7 +164,7 @@ class BiFPNNeck(nn.Module):
         for layer in self.layers:
             f3, f4, f5 = layer(f3, f4, f5)
 
-        return f3 + f4 + f5   # (B, 128, T)
+        return f3 + f4 + f5   # (B, d, T)
 
 
 # ──────────────────────────────────────────────────────────

@@ -192,6 +192,10 @@ def train_epoch(
             feat  = preproc(audio)                # (B, 5, 64, T)
             pred  = model(feat)                   # dict
             losses = criterion(pred, gt)
+            # Auxiliary decoder losses (weighted 0.4 each)
+            for aux_pred in pred.get("aux", []):
+                aux = criterion(aux_pred, gt)
+                losses["total"] = losses["total"] + 0.4 * aux["total"]
 
         optimizer.zero_grad(set_to_none=True)
         scaler.scale(losses["total"]).backward()

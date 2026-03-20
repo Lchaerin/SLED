@@ -9,5 +9,7 @@
 /dataset/audio
 /dataset/meta
 /dataset/sources
+/checkpoints_ver1
+/checkpoints_ver2
 /checkpoints
 /results
